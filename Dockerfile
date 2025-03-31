@@ -1,22 +1,22 @@
-FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-devel
+FROM nvidia/cuda:11.7.1-cudnn8-runtime-ubuntu22.04
 
-USER root
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget curl git build-essential libssl-dev unzip aria2 && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Miniconda and create Python 3.10 environment
-RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh && \
-    bash /tmp/miniconda.sh -b -p /opt/conda && \
-    rm -f /tmp/miniconda.sh && \
-    /opt/conda/bin/conda create -y -n py310 python=3.10 pip && \
-    /opt/conda/bin/conda clean -afy
+# 기본 패키지 및 Python 3.10 관련 패키지 설치
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-venv \
+    python3.10-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
-# Activate Python 3.10 environment by default for interactive shells
-RUN echo ". /opt/conda/etc/profile.d/conda.sh && conda activate py310" >> /etc/bash.bashrc
+# python 명령어를 python3.10으로 지정
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
 
-ENV PATH="/opt/conda/envs/py310/bin:/opt/conda/bin:$PATH" \
-    SHELL="/bin/bash"
+# pip 업그레이드
+RUN python -m pip install --upgrade pip
 
-CMD ["bash"]
+# PyTorch와 관련 라이브러리 설치 (CUDA 11.7 지원)
+RUN pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu117
+
+CMD [ "python" ]
