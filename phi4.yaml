@@ -1,0 +1,4 @@
+phi4-multimodal:
+  class: audio_evals.models.phi4_multimodal.Phi4Multimodal
+  args:
+    path: microsoft/Phi-4-multimodal-instruct
