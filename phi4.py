@@ -1,38 +1,26 @@
 import logging
-import re
-import io
-import requests
-import librosa
+from typing import Dict, Optional, Tuple, Any
 from PIL import Image
-from copy import deepcopy
-from typing import Dict, Any
-
+import librosa
 import torch
-from transformers import (
-    AutoModelForCausalLM,
-    AutoProcessor,
-    GenerationConfig
-)
-
+from transformers import AutoModelForCausalLM, AutoProcessor, GenerationConfig
 from audio_evals.base import PromptStruct
-from audio_evals.models.model import Model
+from copy import deepcopy
+
+from audio_evals.models.model import Model  # 프레임워크에 맞게 수정 가능
 
 logger = logging.getLogger(__name__)
 
-
 def process_prompts(prompt: PromptStruct):
-    """prompt 구조를 Qwen2audio 예시처럼 변환."""
     def _conv_contents(content):
-        c = deepcopy(content)
-        for ele in c:
+        content = deepcopy(content)
+        for ele in content:
             if ele["type"] == "audio":
                 ele["audio_url"] = ele["value"]
-            elif ele["type"] == "image":
-                ele["image_url"] = ele["value"]
             elif ele["type"] == "text":
                 ele["text"] = ele["value"]
             del ele["value"]
-        return c
+        return content
 
     for line in prompt:
         line["content"] = _conv_contents(line["contents"])
@@ -40,75 +28,61 @@ def process_prompts(prompt: PromptStruct):
 
     return prompt
 
-
-class Phi4Multimodal(Model):
-    def __init__(self, path: str, sample_params: Dict[str, Any] = None):
-        # 필요에 따라 pretraining 여부/기본 파라미터 설정
-        super().__init__(True, sample_params)
-
-        logger.debug(f"Loading Phi4 model from {path}...")
+class Phi4MultimodalInstruct(Model):
+    def __init__(self, path: str, sample_params: Optional[Dict[str, Any]] = None):
+        super().__init__(False, sample_params)
+        logger.debug(f"모델을 {path}에서 로드하는 중...")
         self.processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
         self.model = AutoModelForCausalLM.from_pretrained(
             path,
             device_map="cuda",
             torch_dtype="auto",
             trust_remote_code=True,
-            # 필요에 따라 _attn_implementation 옵션 조정
             _attn_implementation='flash_attention_2',
         ).cuda()
         self.generation_config = GenerationConfig.from_pretrained(path)
-        logger.debug("Model load complete.")
+        logger.debug(f"{path}에서 모델 로드 완료")
 
-    def _inference(self, prompt: PromptStruct, **kwargs):
-        # 1) prompt 구조 변환
+    def _inference(
+        self,
+        prompt: PromptStruct,
+        **kwargs,
+    ) -> str:
         prompt = process_prompts(prompt)
-
-        # 2) 텍스트 변환
-        #    Qwen2audio 예시처럼 apply_chat_template 사용
-        #    (phi4 processor가 동일한 함수를 제공하지 않을 수 있으니 필요 시 수정)
         text = self.processor.apply_chat_template(
-            prompt,
-            add_generation_prompt=True,
-            tokenize=False
+            prompt, add_generation_prompt=True, tokenize=False
         )
 
-        # 3) 오디오·이미지 로드
         audios = []
-        images = []
-        for msg in prompt:
-            for ele in msg["content"]:
-                if ele["type"] == "audio":
-                    audio_data, sr = librosa.load(ele["audio_url"], sr=None)
-                    audios.append((audio_data, sr))
-                elif ele["type"] == "image":
-                    resp = requests.get(ele["image_url"])
-                    image = Image.open(io.BytesIO(resp.content))
-                    images.append(image)
+        for message in prompt:
+            if isinstance(message["content"], list):
+                for ele in message["content"]:
+                    if ele["type"] == "audio":
+                        audios.append( 
+                            librosa.load(
+                                ele["audio_url"],
+                                sr=self.processor.feature_extractor.sampling_rate,
+                            )[0]
+                        )
+        
 
-        # 4) 입력 데이터 구성
-        #    images나 audios 중 필요한 것만 processor에 넘김
-        inputs = self.processor(
-            text=text,
-            audios=audios if audios else None,
-            images=images if images else None,
-            return_tensors="pt",
-            padding=True
-        ).to("cuda")
+        prompt = [
+            {"role": "system", "content": "You are a helpful assistant."}
+        ] + prompt
+        logger.debug("prompt: {}".format(prompt))
+        inputs = self.processor(text=text, audios=audios, return_tensors="pt").to("cuda")
 
-        # 5) 모델 추론
+        # 모델 생성
         generate_ids = self.model.generate(
             **inputs,
-            max_new_tokens=kwargs.get("max_new_tokens", 512),
+            max_new_tokens=1000,
             generation_config=self.generation_config,
+            **kwargs,
         )
-
-        # 6) 결과 디코딩
-        #    입력 길이만큼 잘라낸 후 batch_decode
-        generate_ids = generate_ids[:, inputs["input_ids"].size(1):]
+        generate_ids = generate_ids[:, inputs["input_ids"].shape[1]:]
         response = self.processor.batch_decode(
             generate_ids,
             skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
+            clean_up_tokenization_spaces=False,
         )[0]
-
         return response
