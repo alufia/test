@@ -1,35 +1,45 @@
-FROM nvidia/cuda:12.2.0-cudnn8-runtime-ubuntu22.04
+# Use NVIDIA CUDA 12.1 as base image with Ubuntu 22.04
+FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Set working directory
+WORKDIR /app
 
-# deadsnakes PPA 추가 및 필요한 패키지 설치 (curl 포함)
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies and Python 3.12
 RUN apt-get update && apt-get install -y \
     software-properties-common \
-    curl
-
-# deadsnakes PPA 추가 (Python 3.12 제공)
-RUN add-apt-repository ppa:deadsnakes/ppa
-
-# Python 3.12 및 관련 패키지 설치 (pip 설치를 위해 distutils 포함)
-RUN apt-get update && apt-get install -y \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y \
     python3.12 \
-    python3.12-venv \
     python3.12-dev \
     python3.12-distutils \
+    python3-pip \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# 기본 python 명령어를 python3.12로 지정
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+# Update alternatives to make Python 3.12 the default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
 
-# get-pip.py로 pip 설치
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python get-pip.py && \
-    rm get-pip.py
+# Update pip to latest version
+RUN python3 -m pip install --upgrade pip
 
-# pip 업그레이드 (선택사항)
-RUN python -m pip install --upgrade pip
+# Install common Python dependencies (optional - modify as needed)
+RUN pip install \
+    numpy \
+    torch \
+    torchvision \
+    cudatoolkit
 
-# PyTorch 설치 (현재 CUDA 12.x용 PyTorch 휠은 cu121이 제공됨)
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Copy your application files (uncomment and modify as needed)
+# COPY requirements.txt .
+# RUN pip install -r requirements.txt
+# COPY . .
 
-CMD ["python"]
+# Set default command
+CMD ["python3"]
